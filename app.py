@@ -1452,7 +1452,7 @@ def main():
         except Exception as e:  # noqa
             st.exception(e)
             return
-        res = dict(base=f"{ab.dig or 'Dig'}", vsdx=out, notes=list(meta["notes"]), pdf=None, png=preview_png(out))
+        res = dict(base=f"{ab.dig or 'Dig'}", vname=f_ab.name, pname=(f_sr.name if f_sr else ""), vsdx=out, notes=list(meta["notes"]), pdf=None, png=preview_png(out))
         if f_sr:
             welds = []
             if us_shot:
@@ -1475,14 +1475,14 @@ def main():
     base = res["base"]
     for nte in res["notes"]:
         st.warning(nte)
-    vname = f"{base}_As-Built.vsdx"
-    pname = f"ExcavationSurvey_Report_Dig_{base}.pdf"
+    vname = res["vname"] or f"{base}_As-Built.vsdx"          # outputs keep the uploaded file names
+    pname = res["pname"] or f"ExcavationSurvey_Report_Dig_{base}.pdf"
     if res["pdf"]:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr(vname, res["vsdx"])
             zf.writestr(pname, res["pdf"])
-        st.download_button("Download both (as-built + survey report)", buf.getvalue(), file_name=f"Dig_{base}_Reports.zip",
+        st.download_button("Download both (as-built + survey report)", buf.getvalue(), file_name=os.path.splitext(vname)[0] + " - Reports.zip",
                            mime="application/zip", type="primary")
         st.download_button("Survey report only (.pdf)", res["pdf"], file_name=pname, mime="application/pdf")
     st.download_button("As-built only (.vsdx)", res["vsdx"], file_name=vname, mime="application/vnd.ms-visio.drawing")
