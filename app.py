@@ -305,6 +305,7 @@ class RepairIn:
     depth_text: str = ""
     name: str = ""
     date_text: str = ""           # mm/dd/yy
+    cuts: List[Tuple[float, float]] = field(default_factory=list)   # all tape cuts (begin, end); cb/ce = outer envelope
     existing: str = ""            # "Coal Tar" / "Polyken Tape" / "" (existing coating on pipe)
 
 
@@ -321,10 +322,19 @@ BOX_RIGHT = 1.45
 LINE_H = 0.1333           # one 8 pt text line
 
 
+def cut_list(rep: RepairIn) -> List[Tuple[float, float]]:
+    return sorted(rep.cuts) if rep.cuts else [(rep.cb, rep.ce)]
+
+
 def validate_repair(rep: RepairIn, joint_len_ft: Optional[float]) -> List[str]:
     w = []
-    if rep.ce <= rep.cb:
-        w.append("End coating must be greater than begin coating.")
+    prev_end = None
+    for k, (a, b) in enumerate(cut_list(rep), 1):
+        if b <= a:
+            w.append(f"Tape cut {k}: end must be greater than begin.")
+        if prev_end is not None and a < prev_end - 1e-9:
+            w.append(f"Tape cut {k} overlaps the previous cut.")
+        prev_end = b
     last_end = None
     for i, s in enumerate(rep.sleeves, 1):
         if s.end <= s.begin:
@@ -353,6 +363,8 @@ class Layout:
 
 def compute_layout(rep: RepairIn) -> Layout:
     feats = {0.0, round(rep.cb, 4), round(rep.ce, 4)}
+    for a, b in cut_list(rep):
+        feats.add(round(a, 4)); feats.add(round(b, 4))
     for s in rep.sleeves:
         feats.add(round(s.begin, 4)); feats.add(round(s.end, 4))
     F = sorted(feats)
@@ -973,7 +985,9 @@ def build_asbuilt(data: bytes, rep: RepairIn) -> Tuple[bytes, dict]:
         bz.wrap(f"{TAG} Existing Polyken Tape", cx, lay.pipe_bottom, lay.pipe_top, 2 * PIPE_R + 0.02)
     # coating
     edge = rep.coating_color.upper()
-    bz.cylinder(f"{TAG} Coating", cx, lay.y(rep.cb), lay.y(rep.ce), 2 * COAT_R, edge, brighten(edge))
+    cuts = cut_list(rep)
+    for k, (a, b) in enumerate(cuts, 1):
+        bz.cylinder(f"{TAG} Coating {k}", cx, lay.y(a), lay.y(b), 2 * COAT_R, edge, brighten(edge))
     # sleeves
     sleeves = sorted(rep.sleeves, key=lambda s: s.begin)
     for i, s in enumerate(sleeves, 1):
@@ -993,8 +1007,10 @@ def build_asbuilt(data: bytes, rep: RepairIn) -> Tuple[bytes, dict]:
         items.append(dict(kind=kind, y_feat=lay.y(d), x_att=x_attach, lines=lines, W=W,
                           h=len(lines) * LINE_H + 0.111))
 
-    add_item("cb", rep.cb, cx - COAT_R, ["Begin Coating", rep.coating_name, sta(rep.cb)])
-    add_item("ce", rep.ce, cx - COAT_R, ["End Coating", rep.coating_name, sta(rep.ce)])
+    for k, (a, b) in enumerate(cuts, 1):
+        tag = f" {k}" if len(cuts) > 1 else ""
+        add_item(f"cb{k}", a, cx - COAT_R, [f"Begin Coating{tag}", rep.coating_name, sta(a)])
+        add_item(f"ce{k}", b, cx - COAT_R, [f"End Coating{tag}", rep.coating_name, sta(b)])
     for i, s in enumerate(sleeves, 1):
         add_item(f"sb{i}", s.begin, cx - SLEEVE_R, _wrap_sleeve("Begin", s.type, 1.086) + [sta(s.begin)])
         add_item(f"se{i}", s.end, cx - SLEEVE_R, _wrap_sleeve("End", s.type, 1.086) + [sta(s.end)])
@@ -1029,19 +1045,24 @@ def build_asbuilt(data: bytes, rep: RepairIn) -> Tuple[bytes, dict]:
     if bands:
         far = [b for b in bands if b[1]] or bands
         yb = min(b[0] for b in far)
-        yt = max(0.62, yb - 0.42)
+        yt = max(0.95, yb - 0.42)
         bt.line(f"{TAG} Leader Metal Band", 2.62, yt + 0.07, cx - 0.27, yb)
         bt.box(f"{TAG} Metal Band label", 2.20, yt, 0.80, 0.18, lines=["Metal Band"], size=8, style=1,
                halign=2, fill=None, border=False)
 
     # dimensions ---------------------------------------------------------
     dims = []
-    if abs(rep.cb) > 1e-6:
-        dims.append(dict(a=0.0, b=rep.cb, blue=True, col=0))
+    if abs(cuts[0][0]) > 1e-6:
+        dims.append(dict(a=0.0, b=cuts[0][0], blue=True, col=0))
     for s in sleeves:
         dims.append(dict(a=s.begin, b=s.end, blue=False, col=0, length=True))
-    dims.append(dict(a=0.0, b=rep.ce, blue=True, col=1))
+    dims.append(dict(a=0.0, b=cuts[0][1], blue=True, col=1))
     rest = []
+    # first cut keeps the fixed blue columns above; extra cuts join the sorted black columns
+    for (a, b) in cuts[1:]:
+        if abs(a) > 1e-6:
+            rest.append(dict(a=0.0, b=a, blue=True))
+        rest.append(dict(a=0.0, b=b, blue=True))
     for s in sleeves:
         if abs(s.begin) > 1e-6:
             rest.append(dict(a=0.0, b=s.begin, blue=False))
@@ -1360,15 +1381,23 @@ def main():
             color = DEFAULT_COATINGS[cn]
             st.color_picker("Coating color (set by type)", color, disabled=True)
         ex = st.selectbox("Existing coating on pipe (everywhere the new coating isn't)", ["(none)"] + EXISTING_COATINGS)
-        cb = st.number_input("Begin coating (ft from U/S weld; negative = upstream of weld)", value=0.0, step=0.05, format="%.2f")
-        ce = st.number_input("End coating (ft from U/S weld)", value=0.0, step=0.05, format="%.2f")
+        ncut = st.number_input("Number of tape cuts (coating lengths)", min_value=1, max_value=4, value=1, step=1)
+        cuts = []
+        for k in range(int(ncut)):
+            t1, t2 = st.columns(2)
+            ca = t1.number_input(f"Tape cut {k + 1} start (ft from U/S weld; negative = upstream)", value=0.0, step=0.05,
+                                 format="%.2f", key=f"ca{k}")
+            cz = t2.number_input(f"Tape cut {k + 1} end (ft from U/S weld)", value=0.0, step=0.05, format="%.2f", key=f"cz{k}")
+            cuts.append((ca, cz))
+        cb = min(c[0] for c in cuts)
+        ce = max(c[1] for c in cuts)
     with b:
         nm = st.text_input("As-built prepared by (name)")
         dt = st.date_input("Survey date", value=date.today(), format="MM/DD/YYYY")
         d1, d2 = st.columns(2)
         ft = d1.number_input("Depth of cover - feet", min_value=0, value=0, step=1)
         inch = d2.number_input("inches", min_value=0, max_value=11, value=0, step=1)
-    n = st.number_input("Number of sleeves", min_value=0, max_value=4, value=1, step=1)
+    n = st.number_input("Number of sleeves", min_value=0, max_value=6, value=1, step=1)
     guess = suggest_sleeves(cands, int(n)) if cands else [[] for _ in range(int(n))]
     sleeves = []
     for i in range(int(n)):
@@ -1409,7 +1438,7 @@ def main():
 
     if not st.button("Build files", type="primary"):
         return
-    rep = RepairIn(coating_name=cn, coating_color=color, cb=cb, ce=ce, sleeves=sleeves, center_gps=center,
+    rep = RepairIn(coating_name=cn, coating_color=color, cb=cb, ce=ce, cuts=cuts, sleeves=sleeves, center_gps=center,
                    depth_text=(f"{int(ft)}' {int(inch):02d}\"" if (ft or inch) else ""),
                    name=nm, date_text=dt.strftime("%m/%d/%y"),
                    existing=("" if ex == "(none)" else ex))
