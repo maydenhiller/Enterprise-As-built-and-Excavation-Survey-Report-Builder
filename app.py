@@ -156,13 +156,13 @@ def load_shots(data: bytes) -> List[Shot]:
         def g(i):
             return r[i] if i is not None and i < len(r) else None
 
-        lon = _f(g(c_x)); lat = _f(g(c_y)); z = _f(g(c_zp)) if c_zp is not None else None
+        lon = _f(g(c_x)); lat = _f(g(c_y)); z = _f(g(c_z))   # X / Y / Z columns, not the rounded Position columns
         if lon is None:
             lon = _f(g(c_xp))
         if lat is None:
             lat = _f(g(c_yp))
         if z is None:
-            z = _f(g(c_z))
+            z = _f(g(c_zp))
         if lon is None or lat is None:
             continue
         shots.append(Shot(name=r[c_name], created=(g(c_time) or ""), lat=lat, lon=lon,
