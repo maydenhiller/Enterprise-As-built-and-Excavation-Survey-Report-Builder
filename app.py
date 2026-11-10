@@ -1436,46 +1436,58 @@ def main():
         us_shot = wl[labels.index(pick_u) - 1] if pick_u != "(none)" else None
         ds_shot = wl[labels.index(pick_d) - 1] if pick_d != "(none)" else None
 
-    if not st.button("Build files", type="primary"):
-        return
-    rep = RepairIn(coating_name=cn, coating_color=color, cb=cb, ce=ce, cuts=cuts, sleeves=sleeves, center_gps=center,
-                   depth_text=(f"{int(ft)}' {int(inch):02d}\"" if (ft or inch) else ""),
-                   name=nm, date_text=dt.strftime("%m/%d/%y"),
-                   existing=("" if ex == "(none)" else ex))
-    probs = validate_repair(rep, jl)
-    for p in probs:
-        st.error(p)
-    if probs:
-        return
-    try:
-        out, meta = build_asbuilt(ab_bytes, rep)
-    except Exception as e:  # noqa
-        st.exception(e)
-        return
-    for nte in meta["notes"]:
-        st.warning(nte)
-    base = f"{ab.dig or 'Dig'}"
-    st.download_button("Download as-built (.vsdx)", out, file_name=f"{base}_As-Built.vsdx",
-                       mime="application/vnd.ms-visio.drawing")
-    png = preview_png(out)
-    if png:
-        st.image(png, caption="Preview (LibreOffice render - Visio may differ slightly)")
-    if f_sr:
-        welds = []
-        if us_shot:
-            welds.append(WeldRow(ab.us_id, us_shot.lat, us_shot.lon, us_shot.elev))
-        if use_ds and ds_shot:
-            welds.append(WeldRow(ab.ds_id, ds_shot.lat, ds_shot.lon, ds_shot.elev))
-        if not welds:
-            st.warning("No weld shot selected - survey report weld rows left blank.")
+    if st.button("Build files", type="primary"):
+        st.session_state.pop("res", None)
+        rep = RepairIn(coating_name=cn, coating_color=color, cb=cb, ce=ce, cuts=cuts, sleeves=sleeves, center_gps=center,
+                       depth_text=(f"{int(ft)}' {int(inch):02d}\"" if (ft or inch) else ""),
+                       name=nm, date_text=dt.strftime("%m/%d/%y"),
+                       existing=("" if ex == "(none)" else ex))
+        probs = validate_repair(rep, jl)
+        for p in probs:
+            st.error(p)
+        if probs:
+            return
         try:
-            pdf, notes = fill_survey(f_sr.getvalue(), ab, welds, nm, rep.date_text)
-            for nte in notes:
-                st.warning(nte)
-            st.download_button("Download survey report (.pdf)", pdf, file_name=f"ExcavationSurvey_Report_Dig_{base}.pdf",
-                               mime="application/pdf")
+            out, meta = build_asbuilt(ab_bytes, rep)
         except Exception as e:  # noqa
-            st.error(str(e))
+            st.exception(e)
+            return
+        res = dict(base=f"{ab.dig or 'Dig'}", vsdx=out, notes=list(meta["notes"]), pdf=None, png=preview_png(out))
+        if f_sr:
+            welds = []
+            if us_shot:
+                welds.append(WeldRow(ab.us_id, us_shot.lat, us_shot.lon, us_shot.elev))
+            if use_ds and ds_shot:
+                welds.append(WeldRow(ab.ds_id, ds_shot.lat, ds_shot.lon, ds_shot.elev))
+            if not welds:
+                res["notes"].append("No weld shot selected - survey report weld rows left blank.")
+            try:
+                pdf, notes = fill_survey(f_sr.getvalue(), ab, welds, nm, rep.date_text)
+                res["pdf"] = pdf
+                res["notes"] += notes
+            except Exception as e:  # noqa
+                res["notes"].append(f"Survey report not filled: {e}")
+        st.session_state["res"] = res
+
+    res = st.session_state.get("res")
+    if not res:
+        return
+    base = res["base"]
+    for nte in res["notes"]:
+        st.warning(nte)
+    vname = f"{base}_As-Built.vsdx"
+    pname = f"ExcavationSurvey_Report_Dig_{base}.pdf"
+    if res["pdf"]:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(vname, res["vsdx"])
+            zf.writestr(pname, res["pdf"])
+        st.download_button("Download both (as-built + survey report)", buf.getvalue(), file_name=f"Dig_{base}_Reports.zip",
+                           mime="application/zip", type="primary")
+        st.download_button("Survey report only (.pdf)", res["pdf"], file_name=pname, mime="application/pdf")
+    st.download_button("As-built only (.vsdx)", res["vsdx"], file_name=vname, mime="application/vnd.ms-visio.drawing")
+    if res["png"]:
+        st.image(res["png"], caption="Preview (LibreOffice render - Visio may differ slightly)")
 
 
 if __name__ == "__main__":
