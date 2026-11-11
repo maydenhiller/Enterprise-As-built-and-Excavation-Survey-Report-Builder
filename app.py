@@ -38,8 +38,10 @@ def round_half_up(x: float) -> int:
     return int(math.floor(x + 0.5 + 1e-9))
 
 
-def station_at(us_station_ft: int, dist_ft: float) -> int:
-    return round_half_up(us_station_ft + dist_ft)
+def station_at(us_station_ft: int, dist_ft: float, direction: int = 1) -> int:
+    """Station `dist_ft` downstream of the U/S weld.  direction = +1 when station
+    numbers ascend going downstream, -1 when they descend."""
+    return round_half_up(us_station_ft + direction * dist_ft)
 
 
 # ----------------------------------------------------------------------
@@ -559,8 +561,15 @@ class AsBuilt:
     @property
     def joint_len(self) -> Optional[float]:
         if self.us_sta is not None and self.ds_sta is not None:
-            return float(self.ds_sta - self.us_sta)
+            return float(abs(self.ds_sta - self.us_sta))
         return None
+
+    @property
+    def direction(self) -> int:
+        """+1 if stationing ascends from the U/S weld to the D/S weld, -1 if it descends."""
+        if self.us_sta is not None and self.ds_sta is not None and self.ds_sta < self.us_sta:
+            return -1
+        return 1
 
 
 class Pkg:
@@ -942,12 +951,16 @@ def build_asbuilt(data: bytes, rep: RepairIn) -> Tuple[bytes, dict]:
         elif mname in KIT_MASTER_NAMES or (KIT_TEXT_RE.search(txt) and not protected):
             shapes_el.remove(sh)
 
+    if info.ds_sta is None or info.ds_sta == info.us_sta:
+        notes.append("Could not tell whether stationing ascends or descends (D/S weld station missing or equal to U/S) - assumed ascending.")
+    elif info.direction < 0:
+        notes.append("Stationing descends downstream on this dig - callout stations count down from the U/S weld.")
     lay = compute_layout(rep)
     cx = info.cx
     us_sta = info.us_sta
 
     def sta(d):
-        return fmt_station(station_at(us_sta, d))
+        return fmt_station(station_at(us_sta, d, info.direction))
 
     # --- 2. pipe + U/S weld move up when the coating starts upstream ----
     delta = lay.y_us - info.y_us
@@ -1360,7 +1373,7 @@ def main():
     jl = ab.joint_len
     st.success(f"Dig {ab.dig or '?'}  |  U/S weld {ab.us_id} @ {fmt_station(ab.us_sta) if ab.us_sta is not None else '?'}  |  "
                f"D/S weld {ab.ds_id} @ {fmt_station(ab.ds_sta) if ab.ds_sta is not None else '?'}"
-               + (f"  |  joint {jl:.0f} ft" if jl else ""))
+               + (f"  |  joint {jl:.0f} ft, stationing {'descending' if ab.direction < 0 else 'ascending'}" if jl else ""))
 
     shots, cands = [], []
     if f_gps:
