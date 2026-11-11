@@ -126,6 +126,15 @@ def _f(x):
         return None
 
 
+def gps_format(data: bytes) -> str:
+    """'R10/SP85 (Latitude/Longitude/Elevation (ft) columns)' or 'Trimble DA2 (X/Y/Z columns)'."""
+    head = data.decode("utf-8-sig", errors="replace").splitlines()[:1]
+    low = [h.strip().lower() for h in next(csv.reader(head), [])] if head else []
+    if "latitude" in low and "longitude" in low:
+        return "R10/SP85 export (Latitude / Longitude / Elevation (ft) columns)"
+    return "Trimble DA2 export (X / Y / Z columns)"
+
+
 def load_shots(data: bytes) -> List[Shot]:
     """Read the raw GNSS export.  Header looks like:
     AGMName,CreatedOn,,1,YPosition,XPosition,ZPosition,Estimatedaccuracy,
@@ -144,12 +153,23 @@ def load_shots(data: bytes) -> List[Shot]:
         return idxs[-1] if last else idxs[0]
 
     c_name = col("agmname", "name", "point", "pointname")
-    c_time = col("createdon", "created", "time")
-    c_x = col("x", last=True)
-    c_y = col("y", last=True)
-    c_z = col("z", last=True)
-    c_xp, c_yp, c_zp = col("xposition"), col("yposition"), col("zposition")
-    c_ha, c_va = col("estimatedaccuracy"), col("estverticalaccuracy")
+    c_time = col("createdon", "created", "time", "date and time")
+    # Two export styles are recognised automatically:
+    #  * Trimble DA2:     X (lon) / Y (lat) / Z (elevation) columns
+    #  * R10 / SP85:      Latitude / Longitude / "Elevation (ft)" columns
+    if col("latitude") is not None and col("longitude") is not None:
+        fmt = "r10"
+        c_x, c_y = col("longitude"), col("latitude")
+        c_z = col("elevation (ft)", "orthometric height (ft)", "elevation")
+        c_xp = c_yp = c_zp = None
+        c_ha, c_va = col("ha"), col("va")
+    else:
+        fmt = "da2"
+        c_x = col("x", last=True)
+        c_y = col("y", last=True)
+        c_z = col("z", last=True)
+        c_xp, c_yp, c_zp = col("xposition"), col("yposition"), col("zposition")
+        c_ha, c_va = col("estimatedaccuracy"), col("estverticalaccuracy")
     shots = []
     for r in rows[1:]:
         if not r or c_name is None or c_name >= len(r) or not r[c_name].strip():
@@ -1379,7 +1399,7 @@ def main():
     if f_gps:
         shots = load_shots(f_gps.getvalue())
         cands = classify_for_dig(shots, ab.dig)
-        st.caption(f"{len(shots)} shots loaded; {len(cands)} match dig {ab.dig}.")
+        st.caption(f"Detected {gps_format(f_gps.getvalue())}. {len(shots)} shots loaded; {len(cands)} match dig {ab.dig}.")
     pool = cands or shots   # fall back to every shot so the user can still pick
 
     st.header("Repair")
