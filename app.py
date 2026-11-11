@@ -104,6 +104,7 @@ class Shot:
     idx: Optional[int] = None
     kind_hint: Optional[str] = None   # Petro Sleeve / B Sleeve
     strong: bool = True          # dig token matched with its letter
+    stake: bool = False          # name says "stake" (a staked location, not the as-found shot)
 
     @property
     def label(self) -> str:
@@ -239,6 +240,7 @@ def classify_for_dig(shots: List[Shot], dig: str) -> List[Shot]:
         txt = re.sub(r"\s+", " ", txt).strip()
         c = Shot(**{k: getattr(s, k) for k in ("name", "created", "lat", "lon", "elev", "h_acc", "v_acc")})
         c.strong = is_strong
+        c.stake = "stake" in txt
         us = bool(re.search(r"(?<![a-z])u/?s(?![a-z])|usgw|ussleeve|(?<![a-z])us(?=b?sleeve)|upstream", txt))
         ds = bool(re.search(r"(?<![a-z])d/?s(?![a-z])|dsgw|dssleeve|(?<![a-z])ds(?=b?sleeve|petro)|downstream", txt))
         c.side = "us" if us and not ds else "ds" if ds and not us else None
@@ -270,7 +272,7 @@ def centroid(shots: List[Shot]) -> Optional[Tuple[float, float, float]]:
 
 def suggest_weld(cands: List[Shot], side: str) -> Optional[Shot]:
     """Best guess for a weld shot: explicit US/DS named shots only, newest wins."""
-    pool = [s for s in cands if s.role == "weld" and s.side == side]
+    pool = [s for s in cands if s.role == "weld" and s.side == side and not s.stake]
     if not pool:
         return None
     pool.sort(key=lambda s: (s.strong, s.created))
@@ -279,8 +281,9 @@ def suggest_weld(cands: List[Shot], side: str) -> Optional[Shot]:
 
 def suggest_sleeves(cands: List[Shot], n: int) -> List[List[Shot]]:
     """One list of shots per sleeve (ordered upstream -> downstream)."""
-    sl = [s for s in cands if s.role == "sleeve"]
+    sl = [s for s in cands if s.role == "sleeve" and not s.stake]
     anom = [s for s in cands if s.role == "anomaly"]
+    anom = [s for s in anom if not s.stake] or anom      # stake only as a fallback
     if n <= 0:
         return []
     if not sl:
@@ -1325,7 +1328,7 @@ import os
 
 
 def _shot_label(s: Shot) -> str:
-    return f"{s.name.strip()}  |  {s.lat:.8f}, {s.lon:.8f}  |  {s.elev:.2f} ft  |  {s.created}"
+    return f"{s.name.strip()}{'  [STAKE]' if s.stake else ''}  |  {s.lat:.8f}, {s.lon:.8f}  |  {s.elev:.2f} ft  |  {s.created}"
 
 
 def _pick(st, label, cands, key, default=None):
