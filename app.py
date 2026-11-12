@@ -55,7 +55,7 @@ DEFAULT_COATINGS: Dict[str, str] = {
     "DENSO 7200": "#00B050",      # lime green
     "SPC 4888": "#8B5A2B",        # brown
     "SPC 2831": "#BFBFBF",        # light gray
-    "Aquawrap": "#D9D9D9",        # light gray, drawn with the hatched wrap look
+    "Aquawrap": "#4BA8F3",        # blue sampled from a field photo, drawn with the hatched wrap look
 }
 
 # coatings drawn with the hatched Wrap Coating look instead of a shaded cylinder
@@ -63,6 +63,12 @@ WRAP_COATINGS = {"Aquawrap"}
 
 # coating already on the pipe wherever the repair coating is not (no measurements)
 EXISTING_COATINGS = ["Coal Tar", "Polyken Tape"]
+
+
+def darken(hex_color: str, k: float = 0.72) -> str:
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return "#%02X%02X%02X" % tuple(int(round(c * k)) for c in (r, g, b))
 
 
 def brighten(hex_color: str, k: float = 1.33) -> str:
@@ -1030,7 +1036,7 @@ def build_asbuilt(data: bytes, rep: RepairIn) -> Tuple[bytes, dict]:
     cuts = cut_list(rep)
     for k, (a, b) in enumerate(cuts, 1):
         if rep.coating_name in WRAP_COATINGS:
-            bz.wrap(f"{TAG} Coating {k}", cx, lay.y(a), lay.y(b), 2 * COAT_R, fg="#7F7F7F", bg=edge)
+            bz.wrap(f"{TAG} Coating {k}", cx, lay.y(a), lay.y(b), 2 * COAT_R, fg=darken(edge), bg=edge)
         else:
             bz.cylinder(f"{TAG} Coating {k}", cx, lay.y(a), lay.y(b), 2 * COAT_R, edge, brighten(edge))
     # sleeves
