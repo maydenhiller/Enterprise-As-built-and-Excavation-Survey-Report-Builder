@@ -55,7 +55,11 @@ DEFAULT_COATINGS: Dict[str, str] = {
     "DENSO 7200": "#00B050",      # lime green
     "SPC 4888": "#8B5A2B",        # brown
     "SPC 2831": "#BFBFBF",        # light gray
+    "Aquawrap": "#D9D9D9",        # light gray, drawn with the hatched wrap look
 }
+
+# coatings drawn with the hatched Wrap Coating look instead of a shaded cylinder
+WRAP_COATINGS = {"Aquawrap"}
 
 # coating already on the pipe wherever the repair coating is not (no measurements)
 EXISTING_COATINGS = ["Coal Tar", "Polyken Tape"]
@@ -241,6 +245,8 @@ def classify_for_dig(shots: List[Shot], dig: str) -> List[Shot]:
         c = Shot(**{k: getattr(s, k) for k in ("name", "created", "lat", "lon", "elev", "h_acc", "v_acc")})
         c.strong = is_strong
         c.stake = "stake" in txt
+        if c.stake:
+            continue          # stake shots are for staking reports only
         us = bool(re.search(r"(?<![a-z])u/?s(?![a-z])|usgw|ussleeve|(?<![a-z])us(?=b?sleeve)|upstream", txt))
         ds = bool(re.search(r"(?<![a-z])d/?s(?![a-z])|dsgw|dssleeve|(?<![a-z])ds(?=b?sleeve|petro)|downstream", txt))
         c.side = "us" if us and not ds else "ds" if ds and not us else None
@@ -834,7 +840,7 @@ class Builder:
         self.xml.append(s)
         return sid
 
-    def wrap(self, name, cx, y_bot, y_top, diam):
+    def wrap(self, name, cx, y_bot, y_top, diam, fg="#000000", bg="#7F7F7F"):
         """Hatched 'Wrap Coating' look from the stencil (FillPattern 5, black on #7F7F7F)."""
         sid = self.nid()
         L = abs(y_top - y_bot)
@@ -843,7 +849,7 @@ class Builder:
              f"<Cell N='PinX' V='{_n(cx)}'/><Cell N='PinY' V='{_n(cy)}'/><Cell N='Width' V='{_n(L)}'/><Cell N='Height' V='{_n(diam)}'/>"
              f"<Cell N='LocPinX' V='{_n(L / 2)}'/><Cell N='LocPinY' V='{_n(diam / 2)}'/><Cell N='Angle' V='-1.5707963267949'/>"
              f"<Cell N='FlipX' V='0'/><Cell N='FlipY' V='0'/><Cell N='ResizeMode' V='0'/>"
-             f"<Cell N='FillForegnd' V='#000000'/><Cell N='FillBkgnd' V='#7F7F7F'/><Cell N='FillPattern' V='5'/>"
+             f"<Cell N='FillForegnd' V='{fg}'/><Cell N='FillBkgnd' V='{bg}'/><Cell N='FillPattern' V='5'/>"
              f"<Section N='Geometry' IX='0'><Cell N='NoFill' V='0'/><Cell N='NoLine' V='0'/><Cell N='NoShow' V='0'/>"
              f"<Cell N='NoSnap' V='0'/><Cell N='NoQuickDrag' V='0'/>"
              f"<Row T='MoveTo' IX='1'><Cell N='X' V='0'/><Cell N='Y' V='0'/></Row>"
@@ -1023,7 +1029,10 @@ def build_asbuilt(data: bytes, rep: RepairIn) -> Tuple[bytes, dict]:
     edge = rep.coating_color.upper()
     cuts = cut_list(rep)
     for k, (a, b) in enumerate(cuts, 1):
-        bz.cylinder(f"{TAG} Coating {k}", cx, lay.y(a), lay.y(b), 2 * COAT_R, edge, brighten(edge))
+        if rep.coating_name in WRAP_COATINGS:
+            bz.wrap(f"{TAG} Coating {k}", cx, lay.y(a), lay.y(b), 2 * COAT_R, fg="#7F7F7F", bg=edge)
+        else:
+            bz.cylinder(f"{TAG} Coating {k}", cx, lay.y(a), lay.y(b), 2 * COAT_R, edge, brighten(edge))
     # sleeves
     sleeves = sorted(rep.sleeves, key=lambda s: s.begin)
     for i, s in enumerate(sleeves, 1):
@@ -1331,6 +1340,10 @@ def _shot_label(s: Shot) -> str:
     return f"{s.name.strip()}{'  [STAKE]' if s.stake else ''}  |  {s.lat:.8f}, {s.lon:.8f}  |  {s.elev:.2f} ft  |  {s.created}"
 
 
+def _nostake(shots):
+    return [s for s in shots if "stake" not in s.name.lower()]
+
+
 def _pick(st, label, cands, key, default=None):
     """Multiselect of candidate shots -> list of Shots (averaged downstream)."""
     labels = [_shot_label(s) for s in cands]
@@ -1403,7 +1416,7 @@ def main():
         shots = load_shots(f_gps.getvalue())
         cands = classify_for_dig(shots, ab.dig)
         st.caption(f"Detected {gps_format(f_gps.getvalue())}. {len(shots)} shots loaded; {len(cands)} match dig {ab.dig}.")
-    pool = cands or shots   # fall back to every shot so the user can still pick
+    pool = _nostake(cands or shots)   # stake shots never offered; fall back to every shot so the user can still pick
 
     st.header("Repair")
     a, b = st.columns(2)
